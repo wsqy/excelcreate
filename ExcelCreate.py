@@ -7,9 +7,14 @@ import os
 import sys
 import time
 import json
+import socket
+import hashlib
 import logging.config
 
 import xlwt
+import gevent
+from gevent import monkey
+
 
 import confWrap
 from RedisObj import RedisObj
@@ -17,12 +22,14 @@ import logConfig
 
 reload(sys)
 sys.setdefaultencoding('utf8')
+monkey.patch_all()
 conf = confWrap.CONF()
 sys.path.append(confWrap.BASE_DIR)
 logging.config.dictConfig(logConfig.LOGGING)
 loggerdebug = logging.getLogger("debug")
 loggerinfo = logging.getLogger("info")
 loggererror = logging.getLogger("error")
+loggerwarning = logging.getLogger("warning")
 
 
 class ExecuteSQl(object):
@@ -66,7 +73,7 @@ class ExecuteSQl(object):
         self._conn.close()
 
 
-class Repote:
+class Repore:
     def __init__(self):
         self._report_key = conf.get("default", "task_storage_key")
         self._operator = {"pay.list": self.pay_list, "register.list": self.register_list, "other": self.other_list}
@@ -91,13 +98,6 @@ class Repote:
         self._action = self._vaule.get("action")
         self._sql = self._vaule.get("sql")
         self._time = self._vaule.get("time")
-
-    @ staticmethod
-    def handle_excelfiled(filed):
-        if filed in mapfiledname:
-            return mapfiledname.get(filed)
-        else:
-            return filed
 
     @staticmethod
     def handle_excelvalue(esql, filed, value):
@@ -142,6 +142,7 @@ class Repote:
         return "%s_%s_%s_%s_%s.xls.tmp" % (self._action, self._uid, timestr, random.randint(1000000, 9999999), ranstr)
 
     def create_excel(self, sql_filed, db_results):
+        real_base_filename = None
         timestr = time.strftime('%Y%m%d', time.localtime(time.time()))
         current_dir = os.path.join(conf.get("default", "Report_Basedir"), timestr)
         self.create_report_path(timestr)
@@ -166,25 +167,32 @@ class Repote:
 
             tmp_base_filename = os.path.join(current_dir, current_filename)
             workbook.save(tmp_base_filename)
+            loggerinfo.info("开始进行报表数据填充(任务略微有点耗时,请耐心等待)....")
             # 获取并写入数据段信息
             esql = ExecuteSQl()
             for row in range(0, len(db_results)):
                 colnumber = 0
                 for col in range(0, len(sql_filed)):
-                    #   如果当前列不需要过滤
-                    if self.is_filedfilter(sql_filed[col][0]) is False:
-                        vaules = self.handle_excelvalue(esql, sql_filed[col][0], db_results[row][col])
-                        workbook_sheet.write(row + 1, colnumber, u'%s' % vaules)
-                        workbook.save(tmp_base_filename)
-                        colnumber += 1
-
+                    try:
+                        #   如果当前列不需要过滤
+                        table_name = sql_filed[col][0]
+                        if table_name in self.mapfiledname:
+                            vaules = self.handle_excelvalue(esql, sql_filed[col][0], db_results[row][col])
+                            workbook_sheet.write(row + 1, colnumber, u'%s' % vaules)
+                            workbook.save(tmp_base_filename)
+                            colnumber += 1
+                    # todo 验证异常后是否还能继续循环
+                    except Exception as e:
+                        loggererror.error("")
+            loggerinfo.info("报表数据填充完成")
             # tmp_base_filename = os.path.join(current_dir, current_filename)
             workbook.save(tmp_base_filename)
             real_filename = os.path.splitext(current_filename)[0]
             real_base_filename = os.path.join(current_dir, real_filename)
             logger.info("报表路径为:%s" % real_base_filename)
             os.rename(tmp_base_filename, real_base_filename)
-            return os.path.join(timestr, real_filename)
+        finally:
+            return real_base_filename
 
     def pay_list(self):
         loggerinfo.info("为%s生成报表" % self._uid)
@@ -192,6 +200,7 @@ class Repote:
         loggerinfo.info("%s的报表数据取出完成" % self._uid)
         excelFile = self.create_excel(dbfiled, results)
         loggerinfo.info("%s的报表生成完成" % self._uid)
+        return excelFile
 
     def register_list(self):
         pass
@@ -199,9 +208,117 @@ class Repote:
     def other_list(self):
         pass
 
+    def delete_uniqueId(self):
+        unique_name = "%s|%s|%s" % (self._uid, self._action, self._sql)
+        unique_name_byte = unique_name.encode()
+        md5_en = hashlib.md5()
+        md5_en.update(unique_name_byte)
+        unique_id = md5_en.hexdigest()
+        task_unique_prefix = conf.get("default", "task_unique_prefix")
+        task_unique = "%s:%s" % (task_unique_prefix, unique_id)
+        try:
+            RedisObj.del_key(task_unique)
+            loggerwarning.warning("删除了redis key: " % task_unique)
+        except:
+            loggererror.error("删除redis key: 失败" % task_unique)
+
+    def notice(self, excelFile):
+        hConnect = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        host, port = conf.get("socket", "host"), conf.getint("socket", "port")
+        hConnect.connect(host, port)
+        ReportBasedir = conf.get("default", "Report_Basedir")
+        relative_Path = excelFile[len(ReportBasedir) + 1:]
+        sendData = {
+            "action": "saytouid",
+            "data": {
+                "uid": self._uid,
+                "action": "makeExcelComplete",
+                "data": {
+                    "file_path": relative_Path,
+                    "task_time": self._time,
+                    "file_type": self._action,
+                }
+            }
+        }
+        hConnect.sendall(json.dumps(sendData))
+        hConnect.close()
+        # TODO添加条件 什么时候删除
+        if True:
+            self.delete_uniqueId()
+
     def create_report(self):
         self.get_task()
         if not self._vaule:
             return
         loggerinfo.info("准备执行任务%s" % self._value)
-        data = self._operator.get(self._action)()
+        excelFile = self._operator.get(self._action)()
+        if not excelFile:
+            loggererror.error("不能建立报表")
+        self.notice(excelFile)
+
+
+def delete_excel():
+    Report_Basedir = conf.get("default", "Report_Basedir")
+    DELETE_REPORT_TIME = conf.get("default", "DELETE_REPORT_TIME")
+    for file in os.listdir(Report_Basedir):
+        # 今天的文件夹跳过
+        if time.strftime('%Y%m%d', time.localtime(time.time())) != os.path.basename(file):
+            filePath = os.path.join(Report_Basedir, file)
+            # 空文件夹删除
+            if not os.listdir(filePath):
+                logger.info("删除空文件夹%s" % filePath)
+                os.rmdir(filePath)
+            else:
+                for f in os.listdir(filePath):
+                    excelfile = os.path.join(filePath, f)
+                    if time.time() - os.path.getctime(excelfile) > DELETE_REPORT_TIME:
+                        logger.info("文件%s已到期，删除" % excelfile)
+                        os.remove(excelfile)
+
+
+class ControlEngine:
+    """
+    消息通知主程序
+    """
+    def __init__(self):
+        self.__be_kill = False
+        self.REPORT_THREADS_NUM = int(conf.get("default", "REPORT_THREADS_NUM"))
+
+    def setQuit(self, pid, signal_num):
+        logger.warning("kill by USR2")
+        self.__be_kill = True
+
+    def gevent_join(self):
+        gevent_task = []
+        for each in range(self.REPORT_THREADS_NUM):
+            gevent_task.append(gevent.spawn(self.creatExcel, each))
+        gevent_task.append(gevent.spawn(self.deleteExcel))
+        logger.info("add gevent task suceess")
+        gevent.joinall(gevent_task)
+
+    def creatExcel(self, sleepTime):
+        while not self.__be_kill:
+            logger.info("excel task start")
+            try:
+                time.sleep((int(sleepTime) + 1) * 2)
+                loadredis = LoadRedis()
+                loadredis.report()
+            except Exception as e:
+                logger.error(e)
+
+    def deleteExcel(self):
+        while not self.__be_kill:
+            logger.info("del task start")
+            try:
+                delete_excel()
+                sleep_time = int(conf.get("default", "DELETE_SLEEP_TIME"))
+                time.sleep(sleep_time)
+            except Exception as e:
+                logger.error(e)
+
+
+if __name__ == "__main__":
+    control_engine = ControlEngine()
+    loggerinfo.info('start task....')
+    signal.signal(signal.SIGUSR2, control_engine.setQuit)
+    control_engine.gevent_join()

@@ -73,6 +73,7 @@ class RedisObj:
         task_info = json.loads(task_info)
         return task_info
 
+    # 以下是有序集合的操作
     def get_earliest_ztask(self, key):
         task_info = self.__redis_con.zrangebyscore(key, '-inf', '+inf', 0, 1)[0]
         task_info = json.loads(task_info)
@@ -86,3 +87,5 @@ class RedisObj:
     def remove_earliest_ztask(self, key, vaule):
         data = json.dumps(vaule)
         self.__redis_con.zrem(key, data)
+
+    # 下面是string类型的操作
