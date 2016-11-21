@@ -64,27 +64,12 @@ LOGGING = {
         },
     },
     'loggers': {
-        'debug': {
+        'loggers': {
             'level': 'DEBUG',
-            'handlers': ['console'],
-            'propagate': False
-        },
-        'info': {
-            'level': 'INFO',
-            'handlers': ['notes'],
-            'propagate': False
-        },
-        'warning': {
-            'level': 'WARNING',
-            'handlers': ['warning'],
-            'propagate': False
-        },
-        'error': {
-            'level': 'ERROR',
-            'handlers': ['errors'],
-            'propagate': False
-        },
+            'handlers': ['console', 'notes', 'warning', 'errors'],
+            'propagate': True
+        }
     }
-}
+
 if __name__ == '__main__':
     logging_file_path("error")

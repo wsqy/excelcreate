@@ -8,6 +8,7 @@ import sys
 import time
 import json
 import socket
+import signal
 import hashlib
 import logging.config
 
@@ -26,10 +27,7 @@ monkey.patch_all()
 conf = confWrap.CONF()
 sys.path.append(confWrap.BASE_DIR)
 logging.config.dictConfig(logConfig.LOGGING)
-loggerdebug = logging.getLogger("debug")
-loggerinfo = logging.getLogger("info")
-loggererror = logging.getLogger("error")
-loggerwarning = logging.getLogger("warning")
+logger = logging.getLogger("loggers")
 
 
 class ExecuteSQl(object):
@@ -52,7 +50,7 @@ class ExecuteSQl(object):
             cur = self._conn.cursor()
             cur.execute(sql)
         except Exception as e:
-            loggererror.error(e)
+            logger.error(e)
         else:
             dbfiled = cur.description
             results = cur.fetchall()  # 搜取所有结果
@@ -63,7 +61,7 @@ class ExecuteSQl(object):
             cur = self._conn.cursor()
             cur.execute(sql)
         except Exception as e:
-            loggererror.error(e)
+            logger.error(e)
         else:
             cur.scroll(0, mode='absolute')  # 重置游标的位置 从0开始
             result = cur.fetchone()  # 搜取结果
@@ -88,10 +86,10 @@ class Repore:
             self._vaule = RedisObj().get_task(self._report_key)
         except redis.exceptions.ConnectionError:
             self._vaule = None
-            loggererror.error("redis连接失败,请检查配置文件")
+            logger.error("redis连接失败,请检查配置文件")
         except Exception as e:
             self._vaule = None
-            loggererror.error("redis连接失败:%s" % e)
+            logger.error("redis连接失败:%s" % e)
         if not self._vaule:
             return
         self._uid = self._vaule.get("uid")
@@ -133,7 +131,7 @@ class Repore:
         # 判断文件夹是否存在  无则创建
         if not os.path.exists(current_dir):
             os.makedirs(current_dir)
-            loggerinfo.info("创建文件夹:%s" % current_dir)
+            logger.info("创建文件夹:%s" % current_dir)
 
     def generateFileName(self):
         random_chr = conf.get("default", "random_chr")
@@ -154,9 +152,9 @@ class Repore:
             # cell_overwrite_ok=True是为了允许修改单元格的
             workbook_sheet = workbook.add_sheet('table_' + self._action.split(".")[0], cell_overwrite_ok=True)
         except Exception as e:
-            loggererror.error("创建报表失败: %s" % e)
+            logger.error("创建报表失败: %s" % e)
         else:
-            loggerinfo.info("开始创建一个报表: %s" % current_filename)
+            logger.info("开始创建一个报表: %s" % current_filename)
             number = 0
             for filed_number in range(0, len(sql_filed)):
                 table_name = sql_filed[filed_number][0]
@@ -167,7 +165,7 @@ class Repore:
 
             tmp_base_filename = os.path.join(current_dir, current_filename)
             workbook.save(tmp_base_filename)
-            loggerinfo.info("开始进行报表数据填充(任务略微有点耗时,请耐心等待)....")
+            logger.info("开始进行报表数据填充(任务略微有点耗时,请耐心等待)....")
             # 获取并写入数据段信息
             esql = ExecuteSQl()
             for row in range(0, len(db_results)):
@@ -183,8 +181,8 @@ class Repore:
                             colnumber += 1
                     # todo 验证异常后是否还能继续循环
                     except Exception as e:
-                        loggererror.error("")
-            loggerinfo.info("报表数据填充完成")
+                        logger.error("")
+            logger.info("报表数据填充完成")
             # tmp_base_filename = os.path.join(current_dir, current_filename)
             workbook.save(tmp_base_filename)
             real_filename = os.path.splitext(current_filename)[0]
@@ -195,11 +193,11 @@ class Repore:
             return real_base_filename
 
     def pay_list(self):
-        loggerinfo.info("为%s生成报表" % self._uid)
+        logger.info("为%s生成报表" % self._uid)
         dbfiled, results = ExecuteSQl().select_sql(self._sql)
-        loggerinfo.info("%s的报表数据取出完成" % self._uid)
+        logger.info("%s的报表数据取出完成" % self._uid)
         excelFile = self.create_excel(dbfiled, results)
-        loggerinfo.info("%s的报表生成完成" % self._uid)
+        logger.info("%s的报表生成完成" % self._uid)
         return excelFile
 
     def register_list(self):
@@ -218,9 +216,9 @@ class Repore:
         task_unique = "%s:%s" % (task_unique_prefix, unique_id)
         try:
             RedisObj.del_key(task_unique)
-            loggerwarning.warning("删除了redis key: " % task_unique)
+            logger.warning("删除了redis key: " % task_unique)
         except:
-            loggererror.error("删除redis key: 失败" % task_unique)
+            logger.error("删除redis key: 失败" % task_unique)
 
     def notice(self, excelFile):
         hConnect = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -250,10 +248,10 @@ class Repore:
         self.get_task()
         if not self._vaule:
             return
-        loggerinfo.info("准备执行任务%s" % self._value)
+        logger.info("准备执行任务%s" % self._value)
         excelFile = self._operator.get(self._action)()
         if not excelFile:
-            loggererror.error("不能建立报表")
+            logger.error("不能建立报表")
         self.notice(excelFile)
 
 
@@ -291,18 +289,17 @@ class ControlEngine:
     def gevent_join(self):
         gevent_task = []
         for each in range(self.REPORT_THREADS_NUM):
-            gevent_task.append(gevent.spawn(self.creatExcel, each))
+            gevent_task.append(gevent.spawn(self.creatExcel))
         gevent_task.append(gevent.spawn(self.deleteExcel))
         logger.info("add gevent task suceess")
         gevent.joinall(gevent_task)
 
-    def creatExcel(self, sleepTime):
+    def creatExcel(self):
         while not self.__be_kill:
             logger.info("excel task start")
             try:
-                time.sleep((int(sleepTime) + 1) * 2)
-                loadredis = LoadRedis()
-                loadredis.report()
+                reporeTask = Repore()
+                reporeTask.report()
             except Exception as e:
                 logger.error(e)
 
@@ -319,6 +316,6 @@ class ControlEngine:
 
 if __name__ == "__main__":
     control_engine = ControlEngine()
-    loggerinfo.info('start task....')
+    logger.info('start task....')
     signal.signal(signal.SIGUSR2, control_engine.setQuit)
     control_engine.gevent_join()
