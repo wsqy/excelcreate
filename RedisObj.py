@@ -7,7 +7,7 @@ import time
 import json
 import redis
 import confWrap
-conf = task.CONF()
+conf = confWrap.CONF()
 
 
 class RedisObj:
