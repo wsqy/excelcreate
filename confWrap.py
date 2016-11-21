@@ -44,13 +44,13 @@ class CONF(object):
         return self.conf.get(key, name).strip()
 
     def getint(self, key, name):
-        return self.con.getint(key, name)
+        return self.conf.getint(key, name)
 
     def getfloat(self, key, name):
-        return self.con.getfloat(key, name)
+        return self.conf.getfloat(key, name)
 
     def getboolean(self, key, name):
-        return self.con.getboolean(key, name)
+        return self.conf.getboolean(key, name)
 
 if __name__ == '__main__':
     conf = CONF()

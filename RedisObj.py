@@ -13,10 +13,10 @@ conf = confWrap.CONF()
 class RedisObj:
     def __init__(self):
         self.__redis_host = conf.get("redis_config", "host")
-        self.__redis_port = conf.get("redis_config", "port")
-        self.__redis_db = conf.get("redis_config", "db")
+        self.__redis_port = conf.getint("redis_config", "port")
+        self.__redis_db = conf.getint("redis_config", "db")
         self.__redis_password = conf.get("redis_config", "password")
-        self.redis_sleep_time = conf.get("default", "SLEEP_TIME")
+        self.redis_sleep_time = conf.getint("default", "SLEEP_TIME")
         self.__redis_con = redis.Redis(connection_pool=self.get_redis_pool())
 
     def get_redis_pool(self):
@@ -31,6 +31,7 @@ class RedisObj:
     def get_task(self, key):
         task_info = self.__redis_con.rpop(key)
         while not task_info:
+            print("暂时无任务")
             time.sleep(self.redis_sleep_time)
             task_info = self.__redis_con.rpop(key)
         task_info = json.loads(task_info)
@@ -60,7 +61,6 @@ class RedisObj:
 
     def del_key(self, key):
         self.__redis_con.delete(key)
-        logger
 
     def random_member(self, key):
         task_info = self.__redis_con.srandmember(key)

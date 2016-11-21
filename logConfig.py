@@ -70,6 +70,8 @@ LOGGING = {
             'propagate': True
         }
     }
+}
+
 
 if __name__ == '__main__':
     logging_file_path("error")
