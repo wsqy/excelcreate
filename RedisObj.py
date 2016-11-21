@@ -6,11 +6,7 @@ import os
 import time
 import json
 import redis
-import logging.config
 import confWrap
-import logConfig
-logging.config.dictConfig(logConfig.LOGGING)
-logger = logging.getLogger("loggers")
 conf = task.CONF()
 
 
@@ -37,7 +33,6 @@ class RedisObj:
         while not task_info:
             time.sleep(self.redis_sleep_time)
             task_info = self.__redis_con.rpop(key)
-        logger.debug("取到一个数据......")
         task_info = json.loads(task_info)
         return task_info
 
@@ -57,16 +52,15 @@ class RedisObj:
 
     def add_set(self, key, data):
         data = json.dumps(data)
-        logger.debug("添加唯一性任务记录:%s" % data)
         return self.__redis_con.sadd(key, data)
 
     def rem_set(self, key, data):
         data = json.dumps(data)
-        logger.debug("删除唯一性任务记录:%s" % data)
         return self.__redis_con.srem(key, data)
 
     def del_key(self, key):
         self.__redis_con.delete(key)
+        logger
 
     def random_member(self, key):
         task_info = self.__redis_con.srandmember(key)
