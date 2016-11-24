@@ -82,4 +82,7 @@ class RedisObj:
         data = json.dumps(vaule)
         self.__redis_con.zrem(key, data)
 
+    def add_zset(self, key, vaule, score):
+        self.__redis_con.zadd(key, vaule, score)
+
     # 下面是string类型的操作

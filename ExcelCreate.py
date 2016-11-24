@@ -15,18 +15,19 @@ import logging.config
 
 import xlwt
 import redis
-# import gevent
+import gevent
 import MySQLdb
-# from gevent import monkey
+from gevent import monkey
 
 
 import confWrap
 from RedisObj import RedisObj
+import OSSUpload
 import logConfig
 
 reload(sys)
 sys.setdefaultencoding('utf8')
-# monkey.patch_all()
+monkey.patch_all()
 conf = confWrap.CONF()
 sys.path.append(confWrap.BASE_DIR)
 logging.config.dictConfig(logConfig.LOGGING)
@@ -219,10 +220,7 @@ class Repore:
         except Exception as e:
             logger.error("删除redis key: %s 失败：%s " % (task_unique, e))
 
-    def notice(self, excelFile, vaule):
-        ReportBasedir = conf.get("default", "Report_Basedir")
-        relative_Path = excelFile[len(ReportBasedir) + 1:]
-        logger.info(relative_Path)
+    def notice(self, relative_Path, vaule):
         sendData = {
             "action": "saytouid",
             "data": {
@@ -246,6 +244,11 @@ class Repore:
         if True:
             self.delete_uniqueId(vaule)
 
+    def relativePath(self, excelFile):
+        ReportBasedir = conf.get("default", "Report_Basedir")
+        relative_Path = excelFile[len(ReportBasedir) + 1:]
+        return relative_Path
+
     def create_report(self):
         vaule = self.get_task()
         if not vaule:
@@ -255,7 +258,19 @@ class Repore:
         if not excelFile:
             logger.error("不能建立报表")
             return
-        self.notice(excelFile, vaule)
+        # 文件在本地的相对路径
+        relative_Path = self.relativePath(excelFile)
+        # 上传到oss中
+        cloud_file_name = os.join.path(conf.get("oss", "basedir"), relative_Path)
+        try:
+            OSSUpload(dict(conf.items("oss"))).upload_file(cloud_file_name, excelFile)
+        except Exception as e:
+            logger.error(e)
+        self.notice(relative_Path, vaule)
+        # 扔到有序集合中
+        key = conf.get("default", "task_cloud_storage_key")
+        vaule = "%s/%s" % (conf.get("oss", "domain"), )
+        RedisObj().add_zset(key, vaule, int(time.time()))
 
 
 def delete_excel():
